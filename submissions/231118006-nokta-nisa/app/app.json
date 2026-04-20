@@ -28,8 +28,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "nokta-nisa-231118006"
+        "projectId": "53a67f8a-9fbb-4831-b602-bae253a5b22a"
       }
-    }
+    },
+    "owner": "nisakrkmz"
   }
 }

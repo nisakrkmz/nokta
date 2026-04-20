@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { generateEngineeringQuestions } from '../services/geminiService';
+import { generateEngineeringQuestions } from '../services/aiService';
 
 export default function QuestionsScreen({ navigation, route }) {
   const { rawIdea } = route.params;

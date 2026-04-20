@@ -10,7 +10,7 @@ import {
   Share,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { generateSpec } from '../services/geminiService';
+import { generateSpec } from '../services/aiService';
 import { saveIdea } from '../services/storageService';
 
 export default function SpecScreen({ navigation, route }) {
@@ -176,7 +176,7 @@ export default function SpecScreen({ navigation, route }) {
           />
           <SpecSection
             emoji="🚀"
-            title="Differentiation"
+            title="Farklılaşma"
             content={spec.differentiation}
           />
 

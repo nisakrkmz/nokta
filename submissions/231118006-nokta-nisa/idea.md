@@ -65,7 +65,7 @@ Tüm cevaplar toplandıktan sonra AI, aşağıdaki bölümlerden oluşan **tek s
 | Katman | Teknoloji | Açıklama |
 |--------|-----------|----------|
 | **Frontend** | React Native + Expo | Cross-platform mobil uygulama |
-| **AI Engine** | Google Gemini Pro | Soru üretimi ve spec generation |
+| **AI Engine** | Groq (Llama 3.3) | Yüksek hızlı soru üretimi ve spec generation |
 | **State Management** | AsyncStorage | Lokal idea history saklama |
 | **UI Framework** | Custom Glassmorphism Components | Premium dark theme tasarım |
 | **Navigation** | React Navigation | Screen transitions ve modal yönetimi |
