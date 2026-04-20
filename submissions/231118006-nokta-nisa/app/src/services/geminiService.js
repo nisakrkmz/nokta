@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // NOT: Gerçek API anahtarınızı buraya eklemeyi unutmayın!
 // Güvenlik için ortam değişkenlerinden veya güvenli bir yapılandırmadan okunmalıdır.
-const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY'; // <--- Buraya kendi anahtarınızı yazın
+const GEMINI_API_KEY = 'AIzaSyBJSt4V6U_G98O-sciuIthfMtjw1R19U_o';
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
