@@ -484,7 +484,7 @@ const styles = StyleSheet.create({
   visionSubButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   captureButton: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.3)', padding: 5, borderWidth: 2, borderColor: '#fff' },
   captureInner: { flex: 1, borderRadius: 35, backgroundColor: '#fff' },
-  glassHeader: { backgroundColor: 'rgba(255,255,255,0.1)', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', marginTop: 40 },
+  glassHeader: { backgroundColor: 'rgba(255,255,255,0.1)', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', marginTop: 64 },
   visionText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   visionSubText: { color: 'rgba(255,255,255,0.7)', fontSize: 14, marginTop: 4 },
   avatarMini: { position: 'absolute', bottom: 140, right: 20, width: 80, height: 80, borderRadius: 40, overflow: 'hidden', borderWidth: 2, borderColor: '#00ffff' },
