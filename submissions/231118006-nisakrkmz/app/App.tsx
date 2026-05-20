@@ -184,11 +184,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   invisibleButton: {
-    backgroundColor: '#f5f5f5', // Identical to settingsItem background
+    backgroundColor: '#ff3b30', // Contrative red for destructive action
     padding: 10,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: '#f5f5f5', // Also invisible
+    borderColor: '#ff3b30', // Contrative red border
   },
   // Nav Styles
   navBar: {
