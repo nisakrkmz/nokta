@@ -347,7 +347,7 @@ export default function App() {
                 </View>
               )}
             </ScrollView>
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.chatInputArea}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} style={styles.chatInputArea}>
               <View style={styles.inputContainer}>
                 <TextInput
                   style={styles.input}
