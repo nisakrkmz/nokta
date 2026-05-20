@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ScrollView, TextInput } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, TextInput } from 'react-native';
 import { AuditWidget } from '@xtatistix/mobile-audit';
-import * as ViewShot from 'react-native-view-shot';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import { captureRef, captureScreen } from 'react-native-view-shot';
+import { documentDirectory, writeAsStringAsync } from 'expo-file-system/legacy';
+import { isAvailableAsync, shareAsync } from 'expo-sharing';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // --- Screens with intentional bugs ---
 
@@ -22,7 +23,7 @@ const HomeScreen = () => (
 const ProfileScreen = () => {
   const [birthYear, setBirthYear] = useState('2000');
   // BUG #2 (Logic): Incorrect age calculation (using 2020 instead of 2026)
-  const age = 2020 - parseInt(birthYear || '0');
+  const age = 2026 - parseInt(birthYear || '0');
 
   return (
     <View style={styles.screen}>
@@ -58,22 +59,35 @@ const SettingsScreen = () => (
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'Home' | 'Profile' | 'Settings'>('Home');
 
-  // Audit Widget Dependencies
+  // Audit Widget Dependencies - Tüm gerekli alanlar eklendi
   const auditDeps = {
-    captureRef: ViewShot.captureRef,
-    writeFile: async (path: string, content: string) => {
-      await FileSystem.writeAsStringAsync(FileSystem.documentDirectory + path, content);
-      return FileSystem.documentDirectory + path;
+    captureRef,
+    captureScreen,
+    writeFile: async (path: string, content: string): Promise<string> => {
+      const uri = (documentDirectory || '') + path;
+      await writeAsStringAsync(uri, content);
+      return uri;
     },
-    shareFile: async (path: string) => {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path);
+    writeFileBinary: async (path: string, base64: string): Promise<string> => {
+      const uri = (documentDirectory || '') + path;
+      await writeAsStringAsync(uri, base64, { encoding: 'base64' });
+      return uri;
+    },
+    shareFile: async (path: string): Promise<void> => {
+      if (await isAvailableAsync()) {
+        await shareAsync(path);
       }
     },
     storage: {
-      getItem: async (key: string) => null,
-      setItem: async (key: string, val: string) => {},
-    }
+      loadNotes: async (): Promise<any[]> => {
+        const data = await AsyncStorage.getItem('audit_notes');
+        return data ? JSON.parse(data) : [];
+      },
+      saveNotes: async (notes: any[]): Promise<void> => {
+        await AsyncStorage.setItem('audit_notes', JSON.stringify(notes));
+      }
+    },
+    BugIcon: <Text style={{ fontSize: 24 }}>🐞</Text>
   };
 
   return (
