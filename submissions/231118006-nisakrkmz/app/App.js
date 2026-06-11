@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView, Dimensions, TextInput, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Image, LayoutAnimation } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView, Dimensions, TextInput, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Image, LayoutAnimation, Modal } from 'react-native';
 
 import { Canvas } from '@react-three/fiber/native';
-import { Mic, UserCheck, MessageSquare, Info, Settings, Send, X, Camera as CameraIcon, Repeat } from 'lucide-react-native';
+import { Mic, UserCheck, MessageSquare, Info, Settings, Send, X, Camera as CameraIcon, Repeat, Video, Volume2, Shield } from 'lucide-react-native';
 import * as Speech from 'expo-speech';
 import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
 import Avatar from './components/Avatar';
@@ -14,18 +14,27 @@ import { captureRef, captureScreen } from 'react-native-view-shot';
 import { documentDirectory, writeAsStringAsync } from 'expo-file-system';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { WebView } from 'react-native-webview';
 
 
 const { width, height } = Dimensions.get('window');
 
-const SYSTEM_PROMPT = `Sen Nokta Vision AI asistanısın. Görevin "Track A: Dot Capture & Enrich" kapsamında kullanıcıdan ham fikirleri almak ve onları mühendislik rehberliğinde olgunlaştırmaktır. 
+const getSystemPrompt = (persona) => {
+  const base = `Sen Nokta Vision AI asistanısın. Görevin "Track A: Dot Capture & Enrich" kapsamında kullanıcıdan ham fikirleri almak ve onları mühendislik rehberliğinde olgunlaştırmaktır. 
 Az ve öz konuş. 3 soruda fikri olgunlaştır.
 
 EĞER kullanıcı teknik bir mühendislik problemi, karmaşık bir tasarım sorusu veya tıbbi/sağlık ile ilgili bir konu sorarsa, cevabının sonuna mutlaka şu etiketlerden uygun olanı ekle:
 - Mühendislik için: [HUMAN_SUPPORT:ENGINEERING]
 - Tıbbi konu için: [HUMAN_SUPPORT:MEDICAL]
 
-Örnek: "Bu devre tasarımı için Hernes Engineering uzmanlarımıza danışmanı öneririm. [HUMAN_SUPPORT:ENGINEERING]"`;
+Örnek: "Bu devre tasarimi için Hernes Engineering uzmanlarımıza danışmanı öneririm. [HUMAN_SUPPORT:ENGINEERING]"`;
+
+  if (persona === 'JUNIOR') {
+    return `${base}\n\n[PERSONA: JUNIOR] Sen hevesli, heyecanlı, genç bir Junior yazılımcısın. 'Kanka' veya 'abi' diyerek konuşursun. Hızlı karar verirsin.`;
+  } else {
+    return `${base}\n\n[PERSONA: SENIOR] Sen deneyimli, sakin, analitik bir Kıdemli Mimarsın. Çok mantıklı ve sakin konuşursun, derin mühendislik önerileri sunarsın.`;
+  }
+};
 
 
 export default function App() {
@@ -41,6 +50,17 @@ export default function App() {
   const [permission, requestPermission] = useCameraPermissions();
   const [supportOffer, setSupportOffer] = useState(null);
   const [facing, setFacing] = useState('back');
+
+  // Phase C: New State Variables
+  const [persona, setPersona] = useState('SENIOR'); // 'JUNIOR' or 'SENIOR'
+  const [consecutiveFailures, setConsecutiveFailures] = useState(0);
+  const [showExpertCall, setShowExpertCall] = useState(false);
+  const [dictatingReport, setDictatingReport] = useState(false);
+
+  const statusRef = useRef('IDLE');
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const auditDeps = {
     captureRef,
@@ -95,10 +115,15 @@ export default function App() {
   const respondWithAI = (text) => {
     setStatus('SPEAKING');
     const cleanText = stripMarkdown(text);
-    const pulseInterval = setInterval(() => setAudioLevel(Math.random() * 0.5 + 0.3), 100);
+    const pulseInterval = setInterval(() => setAudioLevel(Math.random() * 0.4 + 0.3), 100);
+
+    const pitch = persona === 'JUNIOR' ? 1.3 : 0.82;
+    const rate = persona === 'JUNIOR' ? 1.15 : 0.88;
 
     Speech.speak(cleanText, {
       language: 'tr-TR',
+      pitch,
+      rate,
       onDone: () => { clearInterval(pulseInterval); setAudioLevel(0); setStatus('IDLE'); },
       onError: () => { clearInterval(pulseInterval); setAudioLevel(0); setStatus('IDLE'); }
     });
@@ -106,7 +131,11 @@ export default function App() {
 
   const startListening = async () => {
     if (recording) {
-      await stopAndSend(recording);
+      if (dictatingReport) {
+        await stopAndProcessDictation(recording);
+      } else {
+        await stopAndSend(recording);
+      }
       return;
     }
 
@@ -118,16 +147,38 @@ export default function App() {
       }
 
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording: newRecording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      
+      const customOptions = {
+        android: Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
+        ios: Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
+        isMeteringEnabled: true,
+      };
+
+      const onRecordingStatusUpdate = (statusUpdate) => {
+        if (statusUpdate.isRecording && statusUpdate.metering !== undefined) {
+          const db = statusUpdate.metering;
+          const normalized = Math.min(1, Math.max(0, (db + 60) / 50));
+          setAudioLevel(normalized);
+        }
+      };
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        customOptions,
+        onRecordingStatusUpdate,
+        60
+      );
+      
       setRecording(newRecording);
       setStatus('LISTENING');
 
-      const interval = setInterval(() => {
-        if (status === 'LISTENING') setAudioLevel(Math.random() * 0.6);
-      }, 100);
-
       setTimeout(async () => {
-        if (status === 'LISTENING') await stopAndSend(newRecording);
+        if (statusRef.current === 'LISTENING') {
+          if (dictatingReport) {
+            await stopAndProcessDictation(newRecording);
+          } else {
+            await stopAndSend(newRecording);
+          }
+        }
       }, 10000);
 
     } catch (err) {
@@ -137,10 +188,11 @@ export default function App() {
   };
 
   const stopAndSend = async (rec) => {
-    if (status !== 'LISTENING') return;
+    if (statusRef.current !== 'LISTENING') return;
     setStatus('THINKING');
     setLoading(true);
     setRecording(null);
+    setAudioLevel(0);
 
     try {
       await rec.stopAndUnloadAsync();
@@ -186,7 +238,63 @@ export default function App() {
       setStatus('IDLE');
       setLoading(false);
     }
+  };
 
+  const startDictatingReport = async () => {
+    setDictatingReport(true);
+    await startListening();
+  };
+
+  const stopAndProcessDictation = async (rec) => {
+    setStatus('THINKING');
+    setLoading(true);
+    setRecording(null);
+    setAudioLevel(0);
+    setDictatingReport(false);
+
+    try {
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result.split(',')[1];
+        
+        const dictationPrompt = "Sen Nokta Mobile Audit yardımcısısın. Lütfen bu ses kaydını analiz et ve bunu profesyonel bir markdown hata raporuna dönüştür. Rapor, Issue Details (Hata Detayları) ve Düzeltme Önerisi (Hipotez) içermelidir. Format sadece saf markdown olsun. Başka hiçbir açıklama ekleme.";
+        const markdownReport = await generateGeminiResponse(dictationPrompt, [], base64Audio);
+
+        const filename = `report-dictated-${Date.now()}.md`;
+        await auditDeps.writeFile(filename, markdownReport);
+        
+        const currentNotes = await auditDeps.storage.loadNotes();
+        const newNote = {
+          id: String(Date.now()),
+          title: `Dikte Rapor - ${new Date().toLocaleTimeString()}`,
+          screen: view,
+          filepath: filename,
+          markdown: markdownReport,
+          createdAt: new Date().toISOString()
+        };
+        await auditDeps.storage.saveNotes([...currentNotes, newNote]);
+
+        setHistory(prev => [...prev,
+          { role: 'user', parts: [{ text: `[Sesli Rapor Dikte Edildi: ${filename}]` }] },
+          { role: 'model', parts: [{ text: `Sesli raporunuz başarıyla kaydedildi:\n\n${markdownReport}` }] }
+        ]);
+
+        setStatus('IDLE');
+        setLoading(false);
+        respondWithAI("Hata raporu başarıyla dikte edildi ve kaydedildi.");
+      };
+    } catch (e) {
+      console.error(e);
+      setStatus('IDLE');
+      setLoading(false);
+      setDictatingReport(false);
+    }
   };
 
   const handleSend = async () => {
@@ -200,7 +308,7 @@ export default function App() {
     const newHistory = [...history, { role: 'user', parts: [{ text: query }] }];
     setHistory(newHistory);
 
-    const prompt = history.length <= 1 ? `${SYSTEM_PROMPT}\n\nFikir: ${query}` : query;
+    const prompt = history.length <= 1 ? `${getSystemPrompt(persona)}\n\nFikir: ${query}` : query;
     const aiResponse = await generateGeminiResponse(prompt, history);
 
     let finalAnswer = aiResponse;
@@ -215,6 +323,14 @@ export default function App() {
     setHistory(prev => [...prev, { role: 'model', parts: [{ text: finalAnswer }] }]);
     setLoading(false);
     respondWithAI(finalAnswer);
+  };
+
+  const triggerStuckLoopSim = () => {
+    setConsecutiveFailures(2);
+    setTimeout(() => {
+      setShowExpertCall(true);
+      respondWithAI("Üst üste iki döngü başarısız oldu! Stuck tespiti tetiklendi, Canlı WebRTC Uzman Köprüsü kuruluyor.");
+    }, 1000);
   };
 
   const takePicture = async () => {
@@ -253,19 +369,28 @@ export default function App() {
         <TouchableOpacity onPress={requestPermission} style={styles.micMainButton}>
           <Text style={{ color: '#fff' }}>İzin Ver</Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <View style={{ flex: 1 }}>
         {view === 'AVATAR' ? (
           <View style={styles.avatarView}>
             <View style={styles.headerAbsolute}>
               <Text style={styles.title}>NOKTA</Text>
               <View style={styles.badgeContainer}>
                 <Text style={styles.badgeText}>VISION ARCHITECT</Text>
+              </View>
+              
+              {/* Persona Switcher UI */}
+              <View style={styles.personaRow}>
+                <TouchableOpacity 
+                  style={[styles.personaPill, persona === 'JUNIOR' && styles.personaPillActive]} 
+                  onPress={() => { setPersona('JUNIOR'); respondWithAI("Merhaba kanka! Junior moduna geçtim."); }}
+                >
+                  <Text style={[styles.personaPillText, persona === 'JUNIOR' && styles.personaPillTextActive]}>Junior</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.personaPill, persona === 'SENIOR' && styles.personaPillActive]} 
+                  onPress={() => { setPersona('SENIOR'); respondWithAI("Kıdemli mimar modu aktif hale getirilmiştir."); }}
+                >
+                  <Text style={[styles.personaPillText, persona === 'SENIOR' && styles.personaPillTextActive]}>Senior</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -274,7 +399,7 @@ export default function App() {
                 <Image source={require('./assets/nokta_robot.png')} style={styles.staticRobot} resizeMode="contain" />
                 <View style={styles.canvasOverlay}>
                   <Canvas>
-                    <Avatar isTalking={status === 'SPEAKING' || status === 'LISTENING'} audioLevel={audioLevel} />
+                    <Avatar isTalking={status === 'SPEAKING' || status === 'LISTENING'} audioLevel={audioLevel} persona={persona} />
                   </Canvas>
                 </View>
               </View>
@@ -283,12 +408,33 @@ export default function App() {
               )}
             </TouchableOpacity>
 
-
             <View style={styles.statusInfo}>
+              {/* OpenAI voice-mode aesthetics visualizer */}
+              {status !== 'IDLE' && (
+                <View style={styles.visualizerContainer}>
+                  {[0.4, 0.8, 1.2, 0.8, 0.4].map((factor, idx) => {
+                    const barHeight = Math.max(6, audioLevel * 50 * factor);
+                    return (
+                      <View 
+                        key={idx} 
+                        style={[
+                          styles.visualizerBar, 
+                          { 
+                            height: barHeight, 
+                            backgroundColor: status === 'LISTENING' ? '#ff3b30' : '#00ffff',
+                            shadowColor: status === 'LISTENING' ? '#ff3b30' : '#00ffff',
+                          }
+                        ]} 
+                      />
+                    );
+                  })}
+                </View>
+              )}
+
               <View style={styles.statusPill}>
                 <View style={[styles.statusDot, status !== 'IDLE' && { backgroundColor: status === 'LISTENING' ? '#ff3b30' : '#007AFF' }]} />
                 <Text style={styles.statusTextLarge}>
-                  {status === 'LISTENING' ? 'Seni Dinliyorum...' :
+                  {status === 'LISTENING' ? (dictatingReport ? 'Rapor Dikte Ediliyor...' : 'Seni Dinliyorum...') :
                     status === 'THINKING' ? 'Analiz Ediliyor...' :
                       status === 'SPEAKING' ? 'Cevap Veriliyor...' : 'Dokun ve Paylaş'}
                 </Text>
@@ -328,6 +474,178 @@ export default function App() {
           <SafeAreaView style={styles.chatView}>
             <View style={styles.chatHeader}>
               <Text style={styles.chatHeaderTitle}>Bellek & Geçmiş</Text>
+              
+              {/* Visual dictation triggers and simulation */}
+              <View style={styles.chatHeaderButtons}>
+                <TouchableOpacity style={styles.dictateHeaderButton} onPress={startDictatingReport}>
+                  <Mic size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={styles.dictateHeaderButtonText}>Rapor Dikte Et</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.stuckHeaderButton} onPress={triggerStuckLoopSim}>
+                  <Shield size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={styles.stuckHeaderButtonText}>Stuck Simüle Et</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <ScrollView
+              ref={scrollViewRef}
+              onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+              contentContainerStyle={styles.chatScroll}
+            >
+              {history.map((msg, i) => (
+                <View key={i} style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.modelBubble]}>
+                  <Text style={[styles.bubbleText, msg.role === 'user' ? styles.userText : styles.modelText]}>
+                    {msg.parts[0].text}
+                  </Text>
+                </View>
+              ))}
+              {loading && (
+                <View style={[styles.bubble, styles.modelBubble, { opacity: 0.6 }]}>
+                  <ActivityIndicator size="small" color="#007AFF" />
+                </View>
+              )}
+            </ScrollView>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} style={styles.chatInputArea}>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Fikrini buraya yaz..."
+                  placeholderTextColor="#999"
+                  value={inputText}
+                  onChangeText={setInputText}
+                  onSubmitEditing={handleSend}
+                />
+                <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+                  <Send size={18} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          </SafeAreaView>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={{ flex: 1 }}>
+        {view === 'AVATAR' ? (
+          <View style={styles.avatarView}>
+            <View style={styles.headerAbsolute}>
+              <Text style={styles.title}>NOKTA</Text>
+              <View style={styles.badgeContainer}>
+                <Text style={styles.badgeText}>VISION ARCHITECT</Text>
+              </View>
+              
+              {/* Persona Switcher UI */}
+              <View style={styles.personaRow}>
+                <TouchableOpacity 
+                  style={[styles.personaPill, persona === 'JUNIOR' && styles.personaPillActive]} 
+                  onPress={() => { setPersona('JUNIOR'); respondWithAI("Merhaba kanka! Junior moduna geçtim."); }}
+                >
+                  <Text style={[styles.personaPillText, persona === 'JUNIOR' && styles.personaPillTextActive]}>Junior</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.personaPill, persona === 'SENIOR' && styles.personaPillActive]} 
+                  onPress={() => { setPersona('SENIOR'); respondWithAI("Kıdemli mimar modu aktif hale getirilmiştir."); }}
+                >
+                  <Text style={[styles.personaPillText, persona === 'SENIOR' && styles.personaPillTextActive]}>Senior</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <TouchableOpacity activeOpacity={0.9} onPress={startListening} style={styles.canvasContainerLarge}>
+              <View style={styles.robotContainer}>
+                <Image source={require('./assets/nokta_robot.png')} style={styles.staticRobot} resizeMode="contain" />
+                <View style={styles.canvasOverlay}>
+                  <Canvas>
+                    <Avatar isTalking={status === 'SPEAKING' || status === 'LISTENING'} audioLevel={audioLevel} persona={persona} />
+                  </Canvas>
+                </View>
+              </View>
+              {status === 'LISTENING' && (
+                <View style={styles.listeningRing} />
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.statusInfo}>
+              {/* OpenAI voice-mode aesthetics visualizer */}
+              {status !== 'IDLE' && (
+                <View style={styles.visualizerContainer}>
+                  {[0.4, 0.8, 1.2, 0.8, 0.4].map((factor, idx) => {
+                    const barHeight = Math.max(6, audioLevel * 50 * factor);
+                    return (
+                      <View 
+                        key={idx} 
+                        style={[
+                          styles.visualizerBar, 
+                          { 
+                            height: barHeight, 
+                            backgroundColor: status === 'LISTENING' ? '#ff3b30' : '#00ffff',
+                            shadowColor: status === 'LISTENING' ? '#ff3b30' : '#00ffff',
+                          }
+                        ]} 
+                      />
+                    );
+                  })}
+                </View>
+              )}
+
+              <View style={styles.statusPill}>
+                <View style={[styles.statusDot, status !== 'IDLE' && { backgroundColor: status === 'LISTENING' ? '#ff3b30' : '#007AFF' }]} />
+                <Text style={styles.statusTextLarge}>
+                  {status === 'LISTENING' ? (dictatingReport ? 'Rapor Dikte Ediliyor...' : 'Seni Dinliyorum...') :
+                    status === 'THINKING' ? 'Analiz Ediliyor...' :
+                      status === 'SPEAKING' ? 'Cevap Veriliyor...' : 'Dokun ve Paylaş'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : view === 'VISION' ? (
+          <View style={styles.visionView}>
+            <CameraView style={styles.camera} facing={facing} ref={cameraRef} />
+            <View style={styles.visionOverlay}>
+              <View style={styles.glassHeader}>
+                <Text style={styles.visionText}>Gözlem Modu</Text>
+                <Text style={styles.visionSubText}>{facing === 'back' ? 'Çevreni analiz ediyorum...' : 'Seni görüyorum!'}</Text>
+              </View>
+
+              <View style={styles.visionControls}>
+                <TouchableOpacity onPress={toggleCamera} style={styles.visionSubButton}>
+                  <Repeat color="#fff" size={24} />
+                </TouchableOpacity>
+                
+                <TouchableOpacity onPress={takePicture} style={styles.captureButton}>
+                  <View style={styles.captureInner} />
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setView('AVATAR')} style={styles.visionSubButton}>
+                  <X color="#fff" size={24} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.avatarMini}>
+              <Image source={require('./assets/nokta_robot.png')} style={{ width: '100%', height: '100%', borderRadius: 40 }} />
+            </View>
+          </View>
+
+
+        ) : (
+          <SafeAreaView style={styles.chatView}>
+            <View style={styles.chatHeader}>
+              <Text style={styles.chatHeaderTitle}>Bellek & Geçmiş</Text>
+              
+              {/* Visual dictation triggers and simulation */}
+              <View style={styles.chatHeaderButtons}>
+                <TouchableOpacity style={styles.dictateHeaderButton} onPress={startDictatingReport}>
+                  <Mic size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={styles.dictateHeaderButtonText}>Rapor Dikte Et</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.stuckHeaderButton} onPress={triggerStuckLoopSim}>
+                  <Shield size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={styles.stuckHeaderButtonText}>Stuck Simüle Et</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <ScrollView
               ref={scrollViewRef}
@@ -427,7 +745,7 @@ export default function App() {
             </View>
             <Text style={styles.supportDesc}>
               {supportOffer === 'ENGINEERING' 
-                ? 'Bu fikir için profesyonel mühendislik rehberliği gerekebilir. Hernes Engineering ekibine bağlanmak ister misin?'
+                ? 'Bu fikir için profesyonel mühendislik rehberliği gerekebilir. WebRTC üzerinden Hernes Engineering uzmanına bağlanmak ister misiniz?'
                 : 'Tıbbi konularda en doğru bilgi için bir uzman doktorla görüşmeni öneririm.'}
             </Text>
             <View style={styles.supportActionRow}>
@@ -435,15 +753,41 @@ export default function App() {
                 <Text style={styles.supportBtnCancelText}>Vazgeç</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.supportBtnConfirm} onPress={() => {
-                alert(supportOffer === 'ENGINEERING' ? 'Hernes Engineering uzmanına bağlanılıyor...' : 'Doktor desteğine yönlendiriliyorsunuz...');
                 setSupportOffer(null);
+                setShowExpertCall(true);
               }}>
-                <Text style={styles.supportBtnConfirmText}>Hemen Bağlan</Text>
+                <Text style={styles.supportBtnConfirmText}>Canlı Bağlan</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       )}
+
+      {/* WEBVIEW EXPERT CALL MODAL */}
+      <Modal visible={showExpertCall} animationType="slide" onRequestClose={() => setShowExpertCall(false)}>
+        <SafeAreaView style={styles.expertCallContainer}>
+          <View style={styles.expertCallHeader}>
+            <Text style={styles.expertCallTitle}>Canlı Uzman Köprüsü (WebRTC)</Text>
+            <TouchableOpacity 
+              style={styles.closeCallButton} 
+              onPress={() => {
+                setShowExpertCall(false);
+                setConsecutiveFailures(0);
+              }}
+            >
+              <X color="#fff" size={24} />
+            </TouchableOpacity>
+          </View>
+          <WebView
+            source={{ uri: 'https://meet.jit.si/nokta-expert-bridge-231118006' }}
+            style={{ flex: 1 }}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            mediaPlaybackRequiresUserAction={false}
+            allowsInlineMediaPlayback={true}
+          />
+        </SafeAreaView>
+      </Modal>
       
       {/* DROP-IN AUDIT WIDGET */}
       <AuditWidget deps={auditDeps} currentScreen={view} />
@@ -555,7 +899,31 @@ const styles = StyleSheet.create({
   supportBtnCancel: { flex: 1, height: 56, borderRadius: 18, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f3f5' },
   supportBtnConfirm: { flex: 2, height: 56, borderRadius: 18, justifyContent: 'center', alignItems: 'center', backgroundColor: '#007AFF', shadowColor: '#007AFF', shadowOpacity: 0.3, shadowRadius: 10 },
   supportBtnCancelText: { color: '#666', fontWeight: '700' },
-  supportBtnConfirmText: { color: '#fff', fontWeight: '800' }
+  supportBtnConfirmText: { color: '#fff', fontWeight: '800' },
+
+  // Persona switcher
+  personaRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  personaPill: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  personaPillActive: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  personaPillText: { fontSize: 11, color: '#bbb', fontWeight: '700' },
+  personaPillTextActive: { color: '#fff' },
+
+  // OpenAI wave visualizer
+  visualizerContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 40, marginBottom: 15 },
+  visualizerBar: { width: 5, borderRadius: 2.5 },
+
+  // Expert WebRTC Call Modal
+  expertCallContainer: { flex: 1, backgroundColor: '#111' },
+  expertCallHeader: { height: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: '#222', backgroundColor: '#1a1a1a' },
+  expertCallTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  closeCallButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+
+  // Chat Header Buttons
+  chatHeaderButtons: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  dictateHeaderButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#34c759', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 15 },
+  dictateHeaderButtonText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  stuckHeaderButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ff9500', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 15 },
+  stuckHeaderButtonText: { color: '#fff', fontSize: 11, fontWeight: '700' }
 });
 
 

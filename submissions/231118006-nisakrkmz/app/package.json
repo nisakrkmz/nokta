@@ -27,6 +27,7 @@
     "react-native": "0.81.5",
     "react-native-svg": "15.12.1",
     "react-native-view-shot": "^5.1.0",
+    "react-native-webview": "^13.16.1",
     "three": "^0.184.0"
   },
   "private": true

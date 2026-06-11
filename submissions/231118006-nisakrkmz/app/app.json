@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Bu uygulama, fikirlerinizin görsel analizini yapmak için kameranızı kullanır.",
+        "NSMicrophoneUsageDescription": "Bu uygulama, fikirlerinizi sesli olarak kuluçkaya yatırmak için mikrofonunuzu kullanır."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +25,11 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.nisakrkmz.noktavisionmobile"
+      "package": "com.nisakrkmz.noktavisionmobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
